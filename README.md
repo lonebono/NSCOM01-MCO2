@@ -7,19 +7,26 @@ insert description here
 
 # Documentation
 
+# SIP Request
 
-
-# SIP Header
 
 ## INVITE sip:{src ip addr} SIP/2.0
 - kept SIP/2.0 so wireshark can detect it hopefully
+- purposeky does not include the username
+
+## ACK sip:linphone@11.0.0.40;transport=udp SIP/2.0
+
+## BYE sip:linphone@11.0.0.40;transport=udp SIP/2.0
+
+
+# SIP Header
 
 ## Via: SIP/2.0/UDP {src ip addr}:{src port};branch=z9hG4bK.{transaction id}
 - branch will start with the "z9hG4bK" flag then proceeded with a randomly generated 9 character string
 
 - rport is omitted since NAT traversal is not implemented
 
-## From: <sip:{src ip addr}>;tag={tag id}
+## From: <sip:linphone@11.0.0.34>;tag=fu-f~cPit
 - tag is also randomly generated 9 char string
 
 ## To: sip:{src ip addr};tag={tag id}
@@ -37,7 +44,7 @@ insert description here
 
 ## Supported omitted
 
-## Allow: INVITE, ACK, CANCEL, BYE, MESSAGE
+## Allow: INVITE, ACK, BYE
 - removed other requests, only keeping MCO2 specs
 
 ## Content-Type: application/sdp
