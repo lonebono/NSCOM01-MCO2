@@ -1,17 +1,146 @@
 import socket
 import threading
-import os
+import os, time, random
 from sip import build_invite, parse_sdp
 from rtp import build_rtp_packet
+from dataclasses import dataclass, field
+
+@dataclass
+class SDP:
+    local_ip: str
+    rtp_port: int
+    username: str = "-"
+    session_name: str = "Talk"
+    # Using timestamps for ID and Version as per RFC 4566
+    session_id: int
+    version: int
+
+    def build(self) -> str:
+        """Constructs the raw SDP string."""
+        lines = [
+            "v=0",
+            f"o={self.username} {self.session_id} {self.version} IN IP4 {self.local_ip}",
+            f"s={self.session_name}",
+            f"c=IN IP4 {self.local_ip}",
+            "t=0 0",
+            f"m=audio {self.rtp_port} RTP/AVP 0",
+            "a=rtpmap:0 PCMU/8000",
+            "" # Trailing newline
+        ]
+        return "\r\n".join(lines)
+
+@dataclass
+class SIP:
+    request: str
+    local_ip: str
+    remote_ip: str
+    from_user: str
+    to_user: str
+    sdp: SDP
+    cseq: int = 1
+    tag: int
+    call_id: str
+
+    def build_message(self) -> str:
+        """Combines header and SDP into a full SIP INVITE packet."""
+        sdp_body = self.sdp.build()
+        header = (
+            f"{self.request} sip:{self.to_user}@{self.remote_ip} SIP/2.0\r\n"
+            f"From: <sip:{self.from_user}@{self.local_ip}>;tag={self.tag}\r\n"
+            f"To: <sip:{self.to_user}@{self.remote_ip}>\r\n"
+            f"Call-ID: {self.call_id}\r\n"
+            f"CSeq: {self.cseq} INVITE\r\n"
+            f"Allow: INVITE, ACK, BYE\r\n"
+            f"Content-Type: application/sdp\r\n"
+            f"Content-Length: {len(sdp_body)}\r\n"
+            "\r\n"
+            f"{sdp_body}"
+        )
+        return header
 
 #  Config
 LOCAL_IP = "127.0.0.1"
+REMOTE_IP = "1.1.1.1"
 SIP_PORT = 5060
 RTP_PORT = 8000
 SSRC = 12345
+FROM_USER ="vaughn"
+TO_USER ="andre"
 
 call_active = False
 remote_rtp_addr = None
+
+
+
+#  Main Loop
+
+def main():
+    listener = threading.Thread(target=sip_listener, daemon=True)
+    listener.start()
+
+    print("\n--- NSCOM01 MCO2 VoIP Client ---")
+    print("Commands: 'call <ip>', 'hangup', 'exit'")
+    
+    try:
+        while True:
+            cmd = input("> ").strip().split()
+            if not cmd: continue
+            
+            if cmd[0] == "call":
+                target_ip = cmd[1]
+
+                invite_sdp = SDP(
+                    local_ip = LOCAL_IP,
+                    rtp_port = RTP_PORT,
+                    username = FROM_USER,
+                    session_name = "Talk",
+                    session_id = int(time.time()),
+                    version = int(time.time())
+                )
+
+                invite_sip = SIP(
+                    local_ip=LOCAL_IP,
+                    remote_ip=REMOTE_IP,
+                    from_user=FROM_USER,
+                    to_user=TO_USER,
+                    sdp=invite_sdp
+                )
+
+                with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+                    s.sendto(invite_sip.encode('utf-8'), (REMOTE_IP, SIP_PORT))
+                print(f"[*] Calling {target_ip}...")
+                
+            elif cmd[0] == "hangup":
+                # Logic to send BYE [cite: 226]
+                print("[*] Hanging up...")
+                call_active = False
+                
+            elif cmd[0] == "exit":
+                break
+    except KeyboardInterrupt:
+        pass
+
+if __name__ == "__main__":
+    main()
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 #  Media Logic 
 
@@ -84,37 +213,3 @@ def sip_listener():
             elif msg.startswith("BYE"):
                 print("[RECV] BYE - Terminating call.")
                 call_active = False
-
-#  Main Loop
-
-def main():
-    listener = threading.Thread(target=sip_listener, daemon=True)
-    listener.start()
-
-    print("\n--- NSCOM01 MCO2 VoIP Client ---")
-    print("Commands: 'call <ip>', 'hangup', 'exit'")
-    
-    try:
-        while True:
-            cmd = input("> ").strip().split()
-            if not cmd: continue
-            
-            if cmd[0] == "call":
-                target_ip = cmd[1]
-                invite_msg, _ = build_invite(LOCAL_IP, target_ip, SIP_PORT, RTP_PORT)
-                with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
-                    s.sendto(invite_msg, (target_ip, SIP_PORT))
-                print(f"[*] Calling {target_ip}...")
-                
-            elif cmd[0] == "hangup":
-                # Logic to send BYE [cite: 226]
-                print("[*] Hanging up...")
-                call_active = False
-                
-            elif cmd[0] == "exit":
-                break
-    except KeyboardInterrupt:
-        pass
-
-if __name__ == "__main__":
-    main()
