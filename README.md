@@ -21,11 +21,6 @@ insert description here
 
 # SIP Header
 
-## Via: SIP/2.0/UDP {src ip addr}:{src port};branch=z9hG4bK.{transaction id}
-- branch will start with the "z9hG4bK" flag then proceeded with a randomly generated 9 character string
-
-- rport is omitted since NAT traversal is not implemented
-
 ## From: <sip:linphone@11.0.0.34>;tag=fu-f~cPit
 - tag is also randomly generated 9 char string
 
@@ -39,11 +34,6 @@ insert description here
 ## Call-ID: TmIkzS6hSB
 - rand 10 char int
 
-## Max-Forwards omitted
-- no proxy implementation to be of use
-
-## Supported omitted
-
 ## Allow: INVITE, ACK, BYE
 - removed other requests, only keeping MCO2 specs
 
@@ -53,9 +43,6 @@ insert description here
 ## Content-Length: {count}
 - count of characters in body
 
-## Contact: <sip:linphone@11.0.0.34;transport=udp>
-- removed sip instance since we dont have other devices
-
 
 
 # SDP Body
@@ -64,7 +51,8 @@ insert description here
 - Session Description Protocol Version (v): 0
 
 ## 0=linphone 3880 854 IN IP4 11.0.0.34
-- originator and session identifier : username, id, version number, network address
+- originator and session identifier : username, session id, version number, network address
+- session id is a 64 NTP timestamp, version number increments by 1 for each hold
 
 ## s=Talk
 - session name mandatory with at least one UTF-8-encoded character
