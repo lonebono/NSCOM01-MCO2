@@ -114,6 +114,25 @@ def sip_listener(sock):
 
         except Exception as e:
             print(f"Listener Error: {e}")
+
+            remote_call_id = "unknown"
+
+            # get most recent call_id from incoming packet
+            for line in msg.split("\n"):
+                if line.lower().startswith("call-id:"):
+                    remote_call_id = line.split(":", 1)[1].strip()
+
+            # obj is the initial invite_sip, or whenever it gets updated in main 
+            obj = current_session.get("obj")
+
+            error_sip = SIP(
+                request="SIP/2.0 400 Bad Request",
+                local_ip=LOCAL_IP, remote_ip=REMOTE_IP,
+                from_user=FROM_USER, to_user=TO_USER,
+                tag = obj.tag if obj else 0,
+                call_id=remote_call_id
+            )
+            sock.sendto(error_sip.build_message().encode(), (REMOTE_IP, SIP_PORT))
             break
 
 
@@ -153,17 +172,21 @@ def main():
                 )
 
                 invite_sip = SIP(
+                    request="INVITE",
                     local_ip=LOCAL_IP,
                     remote_ip=REMOTE_IP,
                     from_user=FROM_USER,
                     to_user=TO_USER,
-                    sdp=invite_sdp
+                    sdp=invite_sdp,
+                    cseq = 1,
+                    tag = random.randint(1000, 9999),
+                    call_id = random.randint(10000, 99999)
                 )
 
                 current_session['obj'] = invite_sip
+                # invite_sip is a dataclass object, while build_message() turns it into a string
 
-                packet = invite_sip.build_invite()
-                sip_sock.sendto(packet.encode(), (REMOTE_IP, SIP_PORT))
+                sip_sock.sendto(invite_sip.build_message().encode(), (REMOTE_IP, SIP_PORT))
                 print(f"[*] INVITE sent to {REMOTE_IP}...")
 
                 
