@@ -69,12 +69,66 @@ TO_USER ="andre"
 
 call_active = False
 remote_rtp_addr = None
+current_session = {'obj': None}
 
+def rtp_sender(target_ip, target_port):
+    # RTP Audio send in realtime
+    pass
+
+def sip_listener(sock):
+    global call_active, current_session
+    
+    while True:
+        try:
+            data, addr = sock.recvfrom(2048)
+            msg = data.decode('utf-8', errors='ignore')
+
+            # Scenario 1: Receive an INVITE
+            if msg.startswith("INVITE"):
+                print(f"\n[RECV] Incoming call from {addr[0]}")
+
+                ok_resp = "SIP/2.0 200 OK\r\nContent-Length: 0\r\n\r\n"
+                sock.sendto(ok_resp.encode(), addr)
+                print("[*] Sent 200 OK. Waiting for ACK...")
+
+            # Scenario 2: Receive a 200 OK
+            elif "SIP/2.0 200 OK" in msg:
+                print(f"\n[RECV] 200 OK from {addr[0]}")
+                if current_session['obj']:
+                    ack = current_session['obj'].build_ack()
+                    sock.sendto(ack.encode(), addr)
+                    print("[*] Sent ACK. Call Established!")
+                    
+                    call_active = True
+                    threading.Thread(target=rtp_sender, args=(addr[0], RTP_PORT), daemon=True).start()
+
+            # Scenario 3: Receive an ACK
+            elif msg.startswith("ACK"):
+                print("[RECV] ACK Received. Starting Media...")
+                call_active = True
+                threading.Thread(target=rtp_sender, args=(addr[0], RTP_PORT), daemon=True).start()
+
+            elif "BYE" in msg:
+                print("[RECV] BYE Received. Call ended.")
+                call_active = False
+
+        except Exception as e:
+            print(f"Listener Error: {e}")
+            break
 
 
 #  Main Loop
 
 def main():
+    global call_active
+    
+    sip_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        sip_sock.bind((LOCAL_IP, SIP_PORT))
+    except OSError:
+        print(f"[!] Could not bind to port {SIP_PORT}.")
+        return
+    
     listener = threading.Thread(target=sip_listener, daemon=True)
     listener.start()
 
@@ -106,9 +160,12 @@ def main():
                     sdp=invite_sdp
                 )
 
-                with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
-                    s.sendto(invite_sip.encode('utf-8'), (REMOTE_IP, SIP_PORT))
-                print(f"[*] Calling {target_ip}...")
+                current_session['obj'] = invite_sip
+
+                packet = invite_sip.build_invite()
+                sip_sock.sendto(packet.encode(), (REMOTE_IP, SIP_PORT))
+                print(f"[*] INVITE sent to {REMOTE_IP}...")
+
                 
             elif cmd[0] == "hangup":
                 # Logic to send BYE [cite: 226]
@@ -119,6 +176,7 @@ def main():
                 break
     except KeyboardInterrupt:
         pass
+    sip_sock.close()
 
 if __name__ == "__main__":
     main()
