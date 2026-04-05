@@ -45,7 +45,7 @@ class SIP:
         """Combines header and SDP into a full SIP INVITE packet."""
         sdp_body = self.sdp.build()
         header = (
-            f"{self.request} sip:{self.to_user}@{self.remote_ip} SIP/2.0\r\n"
+            f"{self.request}\r\n"
             f"From: <sip:{self.from_user}@{self.local_ip}>;tag={self.tag}\r\n"
             f"To: <sip:{self.to_user}@{self.remote_ip}>\r\n"
             f"Call-ID: {self.call_id}\r\n"
@@ -189,11 +189,24 @@ def main():
                 sip_sock.sendto(invite_sip.build_message().encode(), (REMOTE_IP, SIP_PORT))
                 print(f"[*] INVITE sent to {REMOTE_IP}...")
 
+                # the rest is handled by the listener thread...
+
                 
             elif cmd[0] == "hangup":
-                # Logic to send BYE [cite: 226]
-                print("[*] Hanging up...")
-                call_active = False
+                obj = current_session.get("obj")
+
+                if obj and call_active:
+                    obj.request = "BYE"
+                    obj.cseq += 1
+                    obj.sdp = None
+                    
+                    bye_packet = obj.build_message()
+                    sip_sock.sendto(bye_packet.encode(), (REMOTE_IP, SIP_PORT))
+                    
+                    call_active = False
+                    print("[*] BYE sent. Call ended.")
+                else:
+                    print("[!] No active call.")
                 
             elif cmd[0] == "exit":
                 break
