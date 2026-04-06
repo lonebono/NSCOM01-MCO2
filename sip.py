@@ -37,15 +37,26 @@ class SIP:
     tag: int = field(default_factory=lambda: random.randint(1000, 9999))
     call_id: str = field(default_factory=lambda: str(random.randint(10000, 99999)))
     sdp: Optional[SDP] = None
+    local_port: Optional[int] = None
+    remote_port: Optional[int] = None
+
+    def _format_sip_uri(self, user: str, host: str, port: Optional[int]) -> str:
+        return f"sip:{user}@{host}:{port}" if port else f"sip:{user}@{host}"
 
     def build_message(self) -> str:
         """Combines header and SDP into a full SIP packet."""
-        # Extract method name from request (e.g., "INVITE" from "INVITE sip:..." or "ACK")
-        method = self.request.split()[0] if " " in self.request else self.request
+        if self.request.startswith("SIP/2.0"):
+            start_line = self.request
+            method = self.request.split()[2] if len(self.request.split()) >= 3 else ""
+        else:
+            uri = self._format_sip_uri(self.to_user, self.remote_ip, self.remote_port)
+            start_line = f"{self.request} {uri} SIP/2.0"
+            method = self.request
+
         header = (
-            f"{self.request}\r\n"
-            f"From: <sip:{self.from_user}@{self.local_ip}>;tag={self.tag}\r\n"
-            f"To: <sip:{self.to_user}@{self.remote_ip}>\r\n"
+            f"{start_line}\r\n"
+            f"From: <{self._format_sip_uri(self.from_user, self.local_ip, self.local_port)}>;tag={self.tag}\r\n"
+            f"To: <{self._format_sip_uri(self.to_user, self.remote_ip, self.remote_port)}>\r\n"
             f"Call-ID: {self.call_id}\r\n"
             f"CSeq: {self.cseq} {method}\r\n"
             f"Allow: INVITE, ACK, BYE\r\n"
@@ -84,25 +95,43 @@ def parse_sip(packet):
     call_id = sip_headers.get('call-id', '')
     cseq_line = sip_headers.get('cseq', '1')
     
-    # Parse From header: <sip:user@ip>;tag=value
+    # Parse From header: <sip:user@host[:port]>;tag=value
     from_user = ""
     local_ip = ""
+    local_port = None
     tag = 0
     
     if "sip:" in from_header:
-        from_user = from_header.split("sip:")[1].split("@")[0]
-        local_ip = from_header.split("@")[1].split(">")[0]
+        uri = from_header.split("sip:", 1)[1].split(">", 1)[0].split(";", 1)[0]
+        from_user, host_port = uri.split("@", 1)
+        if ":" in host_port:
+            local_ip, port_str = host_port.rsplit(":", 1)
+            try:
+                local_port = int(port_str)
+            except ValueError:
+                local_ip = host_port
+        else:
+            local_ip = host_port
     
     if "tag=" in from_header:
-        tag = int(from_header.split("tag=")[1])
+        tag = int(from_header.split("tag=", 1)[1])
     
-    # Parse To header: <sip:user@ip>
+    # Parse To header: <sip:user@host[:port]>
     to_user = ""
     remote_ip = ""
+    remote_port = None
     
     if "sip:" in to_header:
-        to_user = to_header.split("sip:")[1].split("@")[0]
-        remote_ip = to_header.split("@")[1].split(">")[0]
+        uri = to_header.split("sip:", 1)[1].split(">", 1)[0].split(";", 1)[0]
+        to_user, host_port = uri.split("@", 1)
+        if ":" in host_port:
+            remote_ip, port_str = host_port.rsplit(":", 1)
+            try:
+                remote_port = int(port_str)
+            except ValueError:
+                remote_ip = host_port
+        else:
+            remote_ip = host_port
     
     # Parse SDP section
     rtp_port = 8000
@@ -137,6 +166,8 @@ def parse_sip(packet):
         remote_ip=remote_ip,
         from_user=from_user,
         to_user=to_user,
+        local_port=local_port,
+        remote_port=remote_port,
         sdp=sdp_obj,
         cseq=int(cseq_line.split()[0]),
         tag=tag,

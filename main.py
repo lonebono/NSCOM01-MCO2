@@ -18,6 +18,23 @@ FROM_USER, TO_USER = "vaughn", "andre"
 call_active = False
 current_session: Dict[str, Any] = {'obj': None, 'remote_rtp_port': 8000}
 
+def bind_udp_socket(host: str, port: int, name: str):
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        sock.bind((host, port))
+        return sock, port
+    except OSError:
+        sock.close()
+        fallback = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        fallback.bind((host, 0))
+        actual_port = fallback.getsockname()[1]
+        print(f"[!] {name} port {port} unavailable; bound to available port {actual_port} instead.")
+        return fallback, actual_port
+
+
+def bind_sip_socket(host: str, port: int):
+    return bind_udp_socket(host, port, "SIP")
+
 def rtp_sender(target_ip, target_port):
     global call_active
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -39,9 +56,14 @@ def rtp_sender(target_ip, target_port):
     sock.close()
 
 def rtp_receiver():
-    global call_active
+    global call_active, RTP_PORT
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
-        s.bind((LOCAL_IP, RTP_PORT))
+        try:
+            s.bind((LOCAL_IP, RTP_PORT))
+        except OSError:
+            s.close()
+            s, actual_rtp_port = bind_udp_socket(LOCAL_IP, RTP_PORT, "RTP")
+            RTP_PORT = actual_rtp_port
         s.settimeout(1.0)
         out_stream = sd.OutputStream(samplerate=8000, channels=1, dtype='int16')
         out_stream.start()
@@ -66,15 +88,18 @@ def sip_listener(sock):
                 
                 resp_sdp = SDP(local_ip=LOCAL_IP, rtp_port=RTP_PORT, username=FROM_USER)
                 ok_sip = SIP(request="SIP/2.0 200 OK", local_ip=LOCAL_IP, remote_ip=addr[0],
-                             from_user=TO_USER, to_user=FROM_USER, sdp=resp_sdp, 
-                             cseq=sip_obj.cseq, call_id=sip_obj.call_id)
+                             from_user=TO_USER, to_user=FROM_USER,
+                             local_port=SIP_PORT, remote_port=addr[1],
+                             sdp=resp_sdp, cseq=sip_obj.cseq, call_id=sip_obj.call_id)
                 sock.sendto(ok_sip.build_message().encode(), addr)
 
             elif "200 OK" in msg:
                 print(f"[SIP] 200 OK received")
                 current_session['remote_rtp_port'] = sdp_obj.rtp_port
                 ack = SIP(request="ACK", local_ip=LOCAL_IP, remote_ip=addr[0],
-                          from_user=FROM_USER, to_user=TO_USER, cseq=sip_obj.cseq, 
+                          from_user=FROM_USER, to_user=TO_USER,
+                          local_port=SIP_PORT, remote_port=addr[1],
+                          cseq=sip_obj.cseq,
                           tag=sip_obj.tag, call_id=sip_obj.call_id)
                 sock.sendto(ack.build_message().encode(), addr)
                 call_active = True
@@ -92,20 +117,39 @@ def sip_listener(sock):
         except Exception as e: print(f"Error: {e}")
 
 def main():
-    sip_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    sip_sock.bind((LOCAL_IP, SIP_PORT))
+    global SIP_PORT, RTP_PORT
+    sip_sock, actual_sip_port = bind_sip_socket(LOCAL_IP, SIP_PORT)
+    SIP_PORT = actual_sip_port
+    rtp_sock, actual_rtp_port = bind_udp_socket(LOCAL_IP, RTP_PORT, "RTP")
+    RTP_PORT = actual_rtp_port
+    rtp_sock.close()
     threading.Thread(target=sip_listener, args=(sip_sock,), daemon=True).start()
-    print(f"--- VoIP Client ({FROM_USER}) ---")
+    print(f"--- VoIP Client  ---")
+    print(f"[+] SIP listening on {LOCAL_IP}:{SIP_PORT}")
+    print(f"[+] RTP listening on {LOCAL_IP}:{RTP_PORT}")
     while True:
         cmd = input("> ").strip().split()
         if not cmd: continue
         if cmd[0] == "call":
             target = cmd[1] if len(cmd) > 1 else REMOTE_IP
+            target_host = target
+            target_port = SIP_PORT
+            if ":" in target:
+                host, port_str = target.rsplit(":", 1)
+                if host:
+                    target_host = host
+                try:
+                    target_port = int(port_str)
+                except ValueError:
+                    print(f"[!] Invalid target port: {port_str}")
+                    continue
             sdp = SDP(local_ip=LOCAL_IP, rtp_port=RTP_PORT, username=FROM_USER)
-            invite = SIP(request="INVITE", local_ip=LOCAL_IP, remote_ip=target,
-                         from_user=FROM_USER, to_user=TO_USER, sdp=sdp)
+            invite = SIP(request="INVITE", local_ip=LOCAL_IP, remote_ip=target_host,
+                         from_user=FROM_USER, to_user=TO_USER,
+                         local_port=SIP_PORT, remote_port=target_port,
+                         sdp=sdp)
             current_session['obj'] = invite
-            sip_sock.sendto(invite.build_message().encode(), (target, SIP_PORT))
+            sip_sock.sendto(invite.build_message().encode(), (target_host, target_port))
         elif cmd[0] == "endcall":
             global call_active
             call_active = False
