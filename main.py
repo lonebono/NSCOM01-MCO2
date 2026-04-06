@@ -14,8 +14,12 @@ except ValueError:
     SIP_PORT, RTP_PORT = 5060, 8000
 SSRC = 12345
 FROM_USER, TO_USER = "vaughn", "andre"
+RECV_FILENAME = "received_output.g711"
 
 call_active = False
+sender_mode = "mic"
+current_send_file = ""
+current_record_file = "received_output.g711"
 current_session: Dict[str, Any] = {'obj': None, 'remote_rtp_port': 8000}
 
 def bind_udp_socket(host: str, port: int, name: str):
@@ -28,50 +32,81 @@ def bind_udp_socket(host: str, port: int, name: str):
         fallback = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         fallback.bind((host, 0))
         actual_port = fallback.getsockname()[1]
-        print(f"[!] {name} port {port} unavailable; bound to available port {actual_port} instead.")
+        print(f"[!] {name} port {port} unavailable; using {actual_port}")
         return fallback, actual_port
-
 
 def bind_sip_socket(host: str, port: int):
     return bind_udp_socket(host, port, "SIP")
 
-def rtp_sender(target_ip, target_port):
+def rtp_file_sender(target_ip, target_port, filename):
     global call_active
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    seq, ts, pkts = 0, 0, 0
-    
-    def callback(indata, frames, time_info, status):
-        nonlocal seq, ts, pkts
-        if not call_active: raise sd.CallbackStop()
-        payload = encode_audio(indata)
-        sock.sendto(build_rtp_packet(seq, ts, SSRC, payload), (target_ip, target_port))
-        pkts += 1
-        seq = (seq + 1) % 65536
-        ts += frames
-        if pkts % 250 == 0:
-            sock.sendto(build_rtcp_report(SSRC, pkts), (target_ip, target_port + 1))
+    seq, ts = 0, 0
+    try:
+        with open(filename, "rb") as f:
+            print(f"[*] Sending file: {filename}")
+            chunk = f.read(160)
+            while chunk and call_active:
+                sock.sendto(build_rtp_packet(seq, ts, SSRC, chunk), (target_ip, target_port))
+                seq = (seq + 1) % 65536
+                ts += 160
+                time.sleep(0.02) # Real-time 8kHz pacing
+                chunk = f.read(160)
+    except FileNotFoundError:
+        print(f"[!] Error: {filename} not found.")
+    finally:
+        sock.close()
 
-    with sd.InputStream(samplerate=8000, channels=1, callback=callback, blocksize=160):
-        while call_active: time.sleep(0.1)
-    sock.close()
+def rtp_sender(target_ip, target_port):
+    global call_active, sender_mode, current_send_file
+    if sender_mode == "file":
+        rtp_file_sender(target_ip, target_port, current_send_file)
+    else:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        seq, ts, pkts = 0, 0, 0
+        def callback(indata, frames, time_info, status):
+            nonlocal seq, ts, pkts
+            if not call_active: raise sd.CallbackStop()
+            payload = encode_audio(indata)
+            sock.sendto(build_rtp_packet(seq, ts, SSRC, payload), (target_ip, target_port))
+            seq, ts = (seq + 1) % 65536, ts + frames
+        with sd.InputStream(samplerate=8000, channels=1, callback=callback, blocksize=160):
+            while call_active: time.sleep(0.1)
+        sock.close()
 
 def rtp_receiver():
-    global call_active, RTP_PORT
+    global call_active, RTP_PORT, current_record_file
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
-        try:
-            s.bind((LOCAL_IP, RTP_PORT))
-        except OSError:
-            s.close()
-            s, actual_rtp_port = bind_udp_socket(LOCAL_IP, RTP_PORT, "RTP")
-            RTP_PORT = actual_rtp_port
+        s.bind((LOCAL_IP, RTP_PORT))
         s.settimeout(1.0)
         out_stream = sd.OutputStream(samplerate=8000, channels=1, dtype='int16')
         out_stream.start()
-        while call_active:
-            try:
-                data, _ = s.recvfrom(2048)
-                out_stream.write(decode_audio(data[12:]))
-            except socket.timeout: continue
+        
+        with open(current_record_file, "wb") as f:
+            print(f"[*] Storing and Playing audio to: {current_record_file}")
+            while call_active:
+                try:
+                    data, _ = s.recvfrom(2048)
+                    payload = data[12:]
+                    f.write(payload) # Store
+                    out_stream.write(decode_audio(payload)) # Play
+                except socket.timeout: continue
+        out_stream.stop()
+
+def play_local_file(filename):
+    print(f"[*] Playing: {filename}")
+    out_stream = sd.OutputStream(samplerate=8000, channels=1, dtype='int16')
+    out_stream.start()
+    try:
+        with open(filename, "rb") as f:
+            chunk = f.read(160)
+            while chunk:
+                out_stream.write(decode_audio(chunk))
+                chunk = f.read(160)
+                time.sleep(0.02)
+    except FileNotFoundError:
+        print("[!] File not found.")
+    finally:
         out_stream.stop()
 
 def sip_listener(sock):
@@ -134,13 +169,11 @@ def sip_listener(sock):
             sock.sendto(error_sip.build_message().encode(), addr)
 
 def main():
-    global SIP_PORT, RTP_PORT
+    global SIP_PORT, RTP_PORT, sender_mode, current_send_file, current_record_file
     sip_sock, actual_sip_port = bind_sip_socket(LOCAL_IP, SIP_PORT)
     SIP_PORT = actual_sip_port
-    rtp_sock, actual_rtp_port = bind_udp_socket(LOCAL_IP, RTP_PORT, "RTP")
-    RTP_PORT = actual_rtp_port
-    rtp_sock.close()
     threading.Thread(target=sip_listener, args=(sip_sock,), daemon=True).start()
+
     print(f"--- VoIP Client  ---")
     print(f"[+] SIP listening on {LOCAL_IP}:{SIP_PORT}")
     print(f"[+] RTP listening on {LOCAL_IP}:{RTP_PORT}")
@@ -167,6 +200,19 @@ def main():
                          sdp=sdp)
             current_session['obj'] = invite
             sip_sock.sendto(invite.build_message().encode(), (target_host, target_port))
+        elif cmd == "transfer":
+            sender_mode = "file"
+            target = cmd[1] if len(cmd) > 1 else REMOTE_IP
+            current_send_file = cmd[2] if len(cmd) > 2 else "input.g711"
+            sdp = SDP(local_ip=LOCAL_IP, rtp_port=RTP_PORT, username=FROM_USER)
+            invite = SIP("INVITE", LOCAL_IP, target, FROM_USER, TO_USER, local_port=SIP_PORT, sdp=sdp)
+            sip_sock.sendto(invite.build_message().encode(), (target, 5060))
+        elif cmd == "record":
+            current_record_file = cmd[1] if len(cmd) > 1 else "received_output.g711"
+            print(f"[*] Next call will save to: {current_record_file}")
+        elif cmd == "play":
+            f_name = cmd[1] if len(cmd) > 1 else "received_output.g711"
+            play_local_file(f_name)
         elif cmd[0] == "endcall":
             global call_active
             call_active = False
