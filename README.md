@@ -9,39 +9,47 @@
 
 2. Install dependenies on the terminal **pip install sounddevice numpy audioop-lts**
 3. Open two terminals
+4. Start the program on both terminals
 
 - Terminal 1: **python main.py 5060 8000**
-- Terminal 2: python main.py 5061 8002
+- Terminal 2: **python main.py 5061 8002**
 
-4. Start the program on both terminals 'main.py'
-5. Start a call from one client by typing 'call (target ip)'
-6. End call by typing 'endcall'
+## Commands
+
+- call <target_ip:port>: Initiates SIP handshake
+- record <filename>: Records a .g711 file
+- play <filename>: Play a saved .g711 file
+- endcall: Sends a BYE message to terminate session
 
 ## Documentation
 
 ### SIP Signaling (RFC 3261)
 
 Handshake: Full INVITE -> 200 OK -> ACK flow\
-Mandatory Headers: Includes Via, From, To, Call-ID, CSeq, Contact, and Content-Length\
-Teardown: Uses BYE to gracefully terminate sessions
+Mandatory Headers: Includes Via, From, To, Call-ID, and CSeq\
+Teardown: Uses BYE to terminate sessions and close sockets
 
 ### SDP Negotiation (RFC 4566)
 
-Dynamic Exchange: SDP is embedded in INVITE and 200 OK to negotiate media endpoints\
-Required Fields:
-
-- v=0 (Version)
-- o= (Origin) - Fixes the username and session ID
-- c=IN IP4 (Connection) - Defines the target IP for audio
-- m=audio (Media) - Defines the RTP port and PCMU/8000 codec
+The SDP class generates the media block inside the INVITE. This gets parsed by the receiver to send RTP packets. The codec is locked to PCMU/8000 for VoIP compatibility.
 
 ### RTP & RTCP (RFC 3550)
 
-RTP Header: 12-byte header with Sequence Number, Timestamp, and SSRC\
-RTCP: Sends periodic Sender Reports (SR) with packet/octet counts every 5 seconds
+RTP Packet: 12-byte header with Sequence Number, Timestamp, and SSRC\
+Transmission: RTP packets sent every 20ms or 8000Hz\
+RTCP Sender Report: Sends a periodic report every second
 
-## Test Cases
+### Bonus
 
-1. Calling Setup
-2. Real Time Audio
-3. End Call
+Real Time Microphone and Two-Way Communication using sounddevice library
+
+## Test Cases and Sample Output
+
+All of our sample output shows the fundamental reliability and protocol compliance of the implementation. The logs and captures confirm a successful three-way handshake, accurate media negotiation via SDP, and the continuous transmission of RTP audio frames supported by periodic RTCP status reports. This documentation serves as proof that the client operates as a standard-compliant VoIP agent.
+
+1. SIP Handshake\
+   ![SIP HANDSHAKE](SIP.jpg)
+2. Wireshark Verification of SIP Signaling and SDP Negotiation\
+   ![WIRESHARK](WIRESHARK.jpg)
+3. RTCP Report\
+   ![RTCP Report](RTCP.jpg)
