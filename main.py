@@ -148,7 +148,11 @@ def sip_listener(sock):
 
             elif msg.startswith("BYE"):
                 call_active = False
-                sock.sendto(b"SIP/2.0 200 OK\r\n\r\n", addr)
+                bye = SIP(request="BYE", local_ip=LOCAL_IP, remote_ip=addr[0],
+                          from_user=FROM_USER, to_user=TO_USER,
+                          local_port=SIP_PORT, remote_port=addr[1],
+                          cseq=sip_obj.cseq,
+                          tag=sip_obj.tag, call_id=sip_obj.call_id)
         except Exception as e:
             print(f"Error: {e}")
             
