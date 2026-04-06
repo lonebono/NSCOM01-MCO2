@@ -163,49 +163,6 @@ def rtp_file_sender(target_ip, target_port, filename):
             import time
             time.sleep(0.02) 
 
-#  Signaling Listener
-
-def sip_listener():
-    """Handles incoming SIP signaling over UDP[cite: 187, 242]."""
-    global call_active, remote_rtp_addr
-    
-    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
-        s.bind((LOCAL_IP, SIP_PORT))
-        print(f"[*] SIP Listener active on {LOCAL_IP}:{SIP_PORT}")
-        
-        while True:
-            data, addr = s.recvfrom(2048)
-            msg = data.decode()
-            
-            # Handle INVITE [cite: 224]
-            if msg.startswith("INVITE"):
-                print(f"[RECV] INVITE from {addr}")
-                remote_rtp_port = parse_sdp(data)
-                remote_rtp_addr = (addr[0], remote_rtp_port)
-                
-                # In a real project, you'd send 100 Trying and 180 Ringing here [cite: 206, 209]
-                # For now, we go straight to 200 OK [cite: 211]
-                # (You'll need a build_200_ok function in sip.py)
-                print("[*] Automatic 200 OK sent (Call Accepted)")
-                
-            # Handle 200 OK (If we were the ones who called) [cite: 212]
-            elif msg.startswith("SIP/2.0 200 OK"):
-                print("[RECV] 200 OK - Call Established!")
-                remote_rtp_port = parse_sdp(data)
-                remote_rtp_addr = (addr[0], remote_rtp_port)
-                call_active = True
-                
-                # Start the Media thread [cite: 228]
-                media_thread = threading.Thread(
-                    target=rtp_file_sender, 
-                    args=(remote_rtp_addr[0], remote_rtp_addr[1], "sample.wav")
-                )
-                media_thread.start()
-
-            # Handle BYE [cite: 217, 226]
-            elif msg.startswith("BYE"):
-                print("[RECV] BYE - Terminating call.")
-                call_active = False
 
 
 #  Main Loop
