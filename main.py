@@ -134,7 +134,7 @@ def sip_listener(sock):
                              sdp=resp_sdp, cseq=sip_obj.cseq, call_id=sip_obj.call_id)
                 sock.sendto(ok_sip.build_message().encode(), addr)
 
-            elif "200 OK" in msg:
+            elif "200 OK" in msg and call_active == True:
                 print(f"[SIP] 200 OK received")
                 current_session['remote_rtp_port'] = sdp_obj.rtp_port
                 current_session['remote_ip'] = addr[0]
