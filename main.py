@@ -75,6 +75,21 @@ def rtp_sender(target_ip, target_port):
             while call_active: time.sleep(0.1)
         sock.close()
 
+
+def rtcp_sender(target_ip, rtcp_port):
+    global call_active
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    packet_count = 0
+    try:
+        while call_active:
+            packet_count += 1
+            report = build_rtcp_report(SSRC, packet_count)
+            sock.sendto(report, (target_ip, rtcp_port))
+            time.sleep(1.0)
+    finally:
+        sock.close()
+
+
 def rtp_receiver():
     global call_active, RTP_PORT, current_record_file
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
@@ -149,6 +164,7 @@ def sip_listener(sock):
                 sock.sendto(ack.build_message().encode(), addr)
                 call_active = True
                 threading.Thread(target=rtp_sender, args=(addr[0], sdp_obj.rtp_port), daemon=True).start()
+                threading.Thread(target=rtcp_sender, args=(addr[0], sdp_obj.rtp_port + 1), daemon=True).start()
                 threading.Thread(target=rtp_receiver, daemon=True).start()
 
             elif msg.startswith("ACK"):
@@ -156,6 +172,7 @@ def sip_listener(sock):
                 current_session['remote_port'] = addr[1]
                 call_active = True
                 threading.Thread(target=rtp_sender, args=(addr[0], current_session['remote_rtp_port']), daemon=True).start()
+                threading.Thread(target=rtcp_sender, args=(addr[0], current_session['remote_rtp_port'] + 1), daemon=True).start()
                 threading.Thread(target=rtp_receiver, daemon=True).start()
 
             elif msg.startswith("BYE"):
