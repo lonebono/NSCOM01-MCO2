@@ -3,8 +3,16 @@
 ## How to Run
 
 1. Install Python and configure paths
-2. Install dependencies on the terminal 'pip install sounddevice numpy'
+
+- **Recommended:** Python 3.10 - 3.12
+- **Note for Python 3.13+:** This project requires `audioop-lts` as the standard `audioop` library was deprecated in Python 3.13.
+
+2. Install dependenies on the terminal **pip install sounddevice numpy audioop-lts**
 3. Open two terminals
+
+- Terminal 1: **python main.py 5060 8000**
+- Terminal 2: python main.py 5061 8002
+
 4. Start the program on both terminals 'main.py'
 5. Start a call from one client by typing 'call (target ip)'
 6. End call by typing 'endcall'
