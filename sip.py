@@ -1,6 +1,6 @@
 import random, time
-from dataclasses import dataclass
-
+from dataclasses import dataclass, field
+from typing import Optional
 
 @dataclass
 class SDP:
@@ -8,9 +8,8 @@ class SDP:
     rtp_port: int
     username: str = "-"
     session_name: str = "Talk"
-    # Using timestamps for ID and Version as per RFC 4566
-    session_id: int
-    version: int
+    session_id: int = field(default_factory=lambda: int(time.time()))
+    version: int = field(default_factory=lambda: int(time.time()))
 
     def build(self) -> str:
         """Constructs the raw SDP string."""
@@ -34,16 +33,15 @@ class SIP:
     remote_ip: str
     from_user: str
     to_user: str
-    sdp: SDP
-    cseq: int
-    tag: int
-    call_id: str
+    cseq: int = 1
+    tag: int = field(default_factory=lambda: random.randint(1000, 9999))
+    call_id: str = field(default_factory=lambda: str(random.randint(10000, 99999)))
+    sdp: Optional[SDP] = None
 
     def build_message(self) -> str:
         """Combines header and SDP into a full SIP packet."""
         # Extract method name from request (e.g., "INVITE" from "INVITE sip:..." or "ACK")
         method = self.request.split()[0] if " " in self.request else self.request
-        
         header = (
             f"{self.request}\r\n"
             f"From: <sip:{self.from_user}@{self.local_ip}>;tag={self.tag}\r\n"
@@ -52,19 +50,11 @@ class SIP:
             f"CSeq: {self.cseq} {method}\r\n"
             f"Allow: INVITE, ACK, BYE\r\n"
         )
-        
-        # Only include SDP if present
         if self.sdp:
             sdp_body = self.sdp.build()
-            header += (
-                f"Content-Type: application/sdp\r\n"
-                f"Content-Length: {len(sdp_body)}\r\n"
-                "\r\n"
-                f"{sdp_body}"
-            )
+            header += f"Content-Type: application/sdp\r\nContent-Length: {len(sdp_body)}\r\n\r\n{sdp_body}"
         else:
             header += "Content-Length: 0\r\n\r\n"
-        
         return header
 
 
@@ -154,16 +144,3 @@ def parse_sip(packet):
     )
     
     return sip_obj, sdp_obj
-
-
-def parse_sdp(data):
-    """Extracts remote RTP port and IP from SDP."""
-    lines = data.decode('utf-8', errors='ignore').split('\r\n')
-    port = 0
-    ip = None
-    for line in lines:
-        if line.startswith('c=IN IP4 '):
-            ip = line.split()[-1]
-        if line.startswith('m=audio'):
-            port = int(line.split()[1])
-    return ip, port
