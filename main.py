@@ -128,7 +128,7 @@ def sip_listener(sock):
                 current_session['tag'] = sip_obj.tag
                 
                 resp_sdp = SDP(local_ip=LOCAL_IP, rtp_port=RTP_PORT, username=FROM_USER)
-                ok_sip = SIP(request="SIP/2.0 200 OK", local_ip=LOCAL_IP, remote_ip=addr[0],
+                ok_sip = SIP(request="SIP/2.0 200 OK (INVITE)", local_ip=LOCAL_IP, remote_ip=addr[0],
                              from_user=TO_USER, to_user=FROM_USER,
                              local_port=SIP_PORT, remote_port=addr[1],
                              sdp=resp_sdp, cseq=sip_obj.cseq, call_id=sip_obj.call_id)
@@ -159,6 +159,11 @@ def sip_listener(sock):
                 threading.Thread(target=rtp_receiver, daemon=True).start()
 
             elif msg.startswith("BYE"):
+                ok_sip = SIP(request="SIP/2.0 200 OK (BYE)", local_ip=LOCAL_IP, remote_ip=addr[0],
+                             from_user=TO_USER, to_user=FROM_USER,
+                             local_port=SIP_PORT, remote_port=addr[1],
+                             sdp=resp_sdp, cseq=sip_obj.cseq, call_id=sip_obj.call_id)
+                sock.sendto(ok_sip.build_message().encode(), addr)
                 call_active = False
         except Exception as e:
             print(f"Error: {e}")
