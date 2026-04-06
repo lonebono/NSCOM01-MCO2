@@ -114,7 +114,24 @@ def sip_listener(sock):
             elif msg.startswith("BYE"):
                 call_active = False
                 sock.sendto(b"SIP/2.0 200 OK\r\n\r\n", addr)
-        except Exception as e: print(f"Error: {e}")
+        except Exception as e:
+            print(f"Error: {e}")
+            
+            remote_call_id = "unknown"
+            msg = data.decode('utf-8', errors='ignore')
+            for line in msg.split("\n"):
+                if line.lower().startswith("call-id:"):
+                    remote_call_id = line.split(":", 1)[1].strip()
+                    break
+            
+            error_sip = SIP(
+                request="SIP/2.0 500 Internal Server Error",
+                local_ip=LOCAL_IP, remote_ip=addr[0],
+                from_user=TO_USER, to_user=FROM_USER,
+                local_port=SIP_PORT, remote_port=addr[1],
+                call_id=remote_call_id
+            )
+            sock.sendto(error_sip.build_message().encode(), addr)
 
 def main():
     global SIP_PORT, RTP_PORT
