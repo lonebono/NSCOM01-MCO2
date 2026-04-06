@@ -1,62 +1,8 @@
 import socket
 import threading
 import os, time, random
-from sip import build_invite, parse_sdp
+from sip import build_invite, parse_sdp, SIP, SDP, parse_sip
 from rtp import build_rtp_packet
-from dataclasses import dataclass, field
-
-@dataclass
-class SDP:
-    local_ip: str
-    rtp_port: int
-    username: str = "-"
-    session_name: str = "Talk"
-    # Using timestamps for ID and Version as per RFC 4566
-    session_id: int
-    version: int
-
-    def build(self) -> str:
-        """Constructs the raw SDP string."""
-        lines = [
-            "v=0",
-            f"o={self.username} {self.session_id} {self.version} IN IP4 {self.local_ip}",
-            f"s={self.session_name}",
-            f"c=IN IP4 {self.local_ip}",
-            "t=0 0",
-            f"m=audio {self.rtp_port} RTP/AVP 0",
-            "a=rtpmap:0 PCMU/8000",
-            "" # Trailing newline
-        ]
-        return "\r\n".join(lines)
-
-@dataclass
-class SIP:
-    request: str
-    local_ip: str
-    remote_ip: str
-    from_user: str
-    to_user: str
-    sdp: SDP
-    cseq: int = 1
-    tag: int
-    call_id: str
-
-    def build_message(self) -> str:
-        """Combines header and SDP into a full SIP INVITE packet."""
-        sdp_body = self.sdp.build()
-        header = (
-            f"{self.request}\r\n"
-            f"From: <sip:{self.from_user}@{self.local_ip}>;tag={self.tag}\r\n"
-            f"To: <sip:{self.to_user}@{self.remote_ip}>\r\n"
-            f"Call-ID: {self.call_id}\r\n"
-            f"CSeq: {self.cseq} INVITE\r\n"
-            f"Allow: INVITE, ACK, BYE\r\n"
-            f"Content-Type: application/sdp\r\n"
-            f"Content-Length: {len(sdp_body)}\r\n"
-            "\r\n"
-            f"{sdp_body}"
-        )
-        return header
 
 #  Config
 LOCAL_IP = "127.0.0.1"
@@ -81,26 +27,65 @@ def sip_listener(sock):
     while True:
         try:
             data, addr = sock.recvfrom(2048)
-            msg = data.decode('utf-8', errors='ignore')
+
+            # Parse incoming SIP packet
+            sip_obj, sdp_obj = parse_sip(data)
+            msg = sip_obj.request
 
             # Scenario 1: Receive an INVITE
             if msg.startswith("INVITE"):
                 print(f"\n[RECV] Incoming call from {addr[0]}")
-
-                ok_resp = "SIP/2.0 200 OK\r\nContent-Length: 0\r\n\r\n"
-                sock.sendto(ok_resp.encode(), addr)
-                print("[*] Sent 200 OK. Waiting for ACK...")
+                current_session['obj'] = sip_obj
+                
+                # Build 200 OK response with SDP from local
+                response_sdp = SDP(
+                    local_ip=LOCAL_IP,
+                    rtp_port=RTP_PORT,
+                    username=FROM_USER,
+                    session_id=int(time.time()),
+                    version=int(time.time())
+                ) # just add the rtp media details like encoding, buffer here later
+                
+                response_tag = random.randint(1000, 9999)
+                ok_sip = SIP(
+                    request="SIP/2.0 200 OK",
+                    local_ip=LOCAL_IP,
+                    remote_ip=sip_obj.local_ip,
+                    from_user=sip_obj.to_user,
+                    to_user=sip_obj.from_user,
+                    sdp=response_sdp,
+                    cseq=sip_obj.cseq,
+                    tag=response_tag,
+                    call_id=sip_obj.call_id
+                )
+                
+                sock.sendto(ok_sip.build_message().encode(), addr)
+                print("[*] Sent 200 OK with SDP. Waiting for ACK...")
 
             # Scenario 2: Receive a 200 OK
             elif "SIP/2.0 200 OK" in msg:
                 print(f"\n[RECV] 200 OK from {addr[0]}")
-                if current_session['obj']:
-                    ack = current_session['obj'].build_ack()
-                    sock.sendto(ack.encode(), addr)
-                    print("[*] Sent ACK. Call Established!")
-                    
-                    call_active = True
-                    threading.Thread(target=rtp_sender, args=(addr[0], RTP_PORT), daemon=True).start()
+                
+                # Extract remote RTP details from the 200 OK response
+                if sdp_obj:
+                    remote_rtp_port = sdp_obj.rtp_port
+                    print(f"[*] Remote RTP port: {remote_rtp_port}")
+                
+                # Build and send ACK
+                ack_sip = SIP(
+                    request="ACK",
+                    local_ip=sip_obj.local_ip,
+                    remote_ip=sip_obj.remote_ip,
+                    from_user=sip_obj.to_user,
+                    to_user=sip_obj.from_user,
+                    sdp=None,
+                    cseq=sip_obj.cseq,
+                    tag=sip_obj.tag,
+                    call_id=sip_obj.call_id
+                )
+                
+                sock.sendto(ack_sip.build_message().encode(), addr)
+                print("[*] Sent ACK. Waiting for call to establish...")
 
             # Scenario 3: Receive an ACK
             elif msg.startswith("ACK"):
@@ -114,26 +99,6 @@ def sip_listener(sock):
 
         except Exception as e:
             print(f"Listener Error: {e}")
-
-            remote_call_id = "unknown"
-
-            # get most recent call_id from incoming packet
-            for line in msg.split("\n"):
-                if line.lower().startswith("call-id:"):
-                    remote_call_id = line.split(":", 1)[1].strip()
-
-            # obj is the initial invite_sip, or whenever it gets updated in main 
-            obj = current_session.get("obj")
-
-            error_sip = SIP(
-                request="SIP/2.0 400 Bad Request",
-                local_ip=LOCAL_IP, remote_ip=REMOTE_IP,
-                from_user=FROM_USER, to_user=TO_USER,
-                tag = obj.tag if obj else 0,
-                call_id=remote_call_id
-            )
-            sock.sendto(error_sip.build_message().encode(), (REMOTE_IP, SIP_PORT))
-            break
 
 #  Media Logic 
 
@@ -225,12 +190,20 @@ def main():
                 obj = current_session.get("obj")
 
                 if obj and call_active:
-                    obj.request = "BYE"
-                    obj.cseq += 1
-                    obj.sdp = None
+                    # Create a new BYE SIP message
+                    bye_sip = SIP(
+                        request="BYE",
+                        local_ip=obj.local_ip,
+                        remote_ip=obj.remote_ip,
+                        from_user=obj.from_user,
+                        to_user=obj.to_user,
+                        sdp=None,
+                        cseq=obj.cseq + 1,
+                        tag=obj.tag,
+                        call_id=obj.call_id
+                    )
                     
-                    bye_packet = obj.build_message()
-                    sip_sock.sendto(bye_packet.encode(), (REMOTE_IP, SIP_PORT))
+                    sip_sock.sendto(bye_sip.build_message().encode(), (REMOTE_IP, SIP_PORT))
                     
                     call_active = False
                     print("[*] BYE sent. Call ended.")
