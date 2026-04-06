@@ -1,4 +1,4 @@
-import socket, threading, os, time, random
+import socket, threading, os, time, random, sys
 import sounddevice as sd
 from typing import Dict, Any, Optional
 from sip import SIP, SDP, parse_sip
@@ -7,7 +7,11 @@ from rtp import build_rtp_packet, build_rtcp_report, encode_audio, decode_audio
 # Config
 LOCAL_IP = "127.0.0.1"
 REMOTE_IP = "127.0.0.1"
-SIP_PORT, RTP_PORT = 5060, 8000
+try:
+    SIP_PORT = int(sys.argv[1]) if len(sys.argv) > 1 else 5060
+    RTP_PORT = int(sys.argv[2]) if len(sys.argv) > 2 else 8000
+except ValueError:
+    SIP_PORT, RTP_PORT = 5060, 8000
 SSRC = 12345
 FROM_USER, TO_USER = "vaughn", "andre"
 

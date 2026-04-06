@@ -1,7 +1,10 @@
 import struct
 import sounddevice as sd
 import numpy as np
-import audioop
+try:
+    import audioop
+except ImportError:
+    import audioop_lts as audioop
 
 def build_rtp_packet(seq, ts, ssrc, payload):
     header = struct.pack('!BBHII', 0x80, 0x00, seq, ts, ssrc)
@@ -16,6 +19,6 @@ def encode_audio(indata):
     return audioop.lin2ulaw(audio_int16, 2)
 
 def decode_audio(payload):
-    """Conlocal G.711 u-law to int16 for playback."""
+    """Converts G.711 u-law to int16 for playback."""
     audio_data = audioop.ulaw2lin(payload, 2)
     return np.frombuffer(audio_data, dtype=np.int16)
