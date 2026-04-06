@@ -111,7 +111,8 @@ def play_local_file(filename):
         out_stream.stop()
 
 def sip_listener(sock):
-    global call_active, current_session
+    global call_active, current_session, bye_state
+    bye_state = False
     while True:
         try:
             data, addr = sock.recvfrom(2048)
@@ -134,7 +135,7 @@ def sip_listener(sock):
                              sdp=resp_sdp, cseq=sip_obj.cseq, call_id=sip_obj.call_id)
                 sock.sendto(ok_sip.build_message().encode(), addr)
 
-            elif "200 OK" in msg and call_active == True:
+            elif "200 OK" in msg and bye_state == False:
                 print(f"[SIP] 200 OK received")
                 current_session['remote_rtp_port'] = sdp_obj.rtp_port
                 current_session['remote_ip'] = addr[0]
@@ -165,6 +166,7 @@ def sip_listener(sock):
                              sdp=resp_sdp, cseq=sip_obj.cseq, call_id=sip_obj.call_id)
                 sock.sendto(ok_sip.build_message().encode(), addr)
                 call_active = False
+                bye_state = True
         except Exception as e:
             print(f"Error: {e}")
             
