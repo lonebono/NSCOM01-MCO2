@@ -20,7 +20,8 @@ call_active = False
 sender_mode = "mic"
 current_send_file = ""
 current_record_file = "received_output.g711"
-current_session: Dict[str, Any] = {'obj': None, 'remote_rtp_port': 8000}
+current_session: Dict[str, Any] = {'obj': None, 'remote_rtp_port': 8000, 'remote_ip': None, 'remote_port': None, 'remote_cseq': None, 'call_id': None, 'tag': None}
+sip_sock = None
 
 def bind_udp_socket(host: str, port: int, name: str):
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -120,6 +121,11 @@ def sip_listener(sock):
             if msg.startswith("INVITE"):
                 print(f"\n[SIP] INVITE from {addr[0]}")
                 current_session['remote_rtp_port'] = sdp_obj.rtp_port
+                current_session['remote_ip'] = addr[0]
+                current_session['remote_port'] = addr[1]
+                current_session['remote_cseq'] = sip_obj.cseq
+                current_session['call_id'] = sip_obj.call_id
+                current_session['tag'] = sip_obj.tag
                 
                 resp_sdp = SDP(local_ip=LOCAL_IP, rtp_port=RTP_PORT, username=FROM_USER)
                 ok_sip = SIP(request="SIP/2.0 200 OK", local_ip=LOCAL_IP, remote_ip=addr[0],
@@ -131,6 +137,10 @@ def sip_listener(sock):
             elif "200 OK" in msg:
                 print(f"[SIP] 200 OK received")
                 current_session['remote_rtp_port'] = sdp_obj.rtp_port
+                current_session['remote_ip'] = addr[0]
+                current_session['remote_port'] = addr[1]
+                current_session['remote_cseq'] = sip_obj.cseq
+                current_session['tag'] = sip_obj.tag
                 ack = SIP(request="ACK", local_ip=LOCAL_IP, remote_ip=addr[0],
                           from_user=FROM_USER, to_user=TO_USER,
                           local_port=SIP_PORT, remote_port=addr[1],
@@ -142,17 +152,13 @@ def sip_listener(sock):
                 threading.Thread(target=rtp_receiver, daemon=True).start()
 
             elif msg.startswith("ACK"):
+                current_session['remote_ip'] = addr[0]
+                current_session['remote_port'] = addr[1]
                 call_active = True
                 threading.Thread(target=rtp_sender, args=(addr[0], current_session['remote_rtp_port']), daemon=True).start()
                 threading.Thread(target=rtp_receiver, daemon=True).start()
 
             elif msg.startswith("BYE"):
-                bye = SIP(request="BYE", local_ip=LOCAL_IP, remote_ip=addr[0],
-                          from_user=FROM_USER, to_user=TO_USER,
-                          local_port=SIP_PORT, remote_port=addr[1],
-                          cseq=sip_obj.cseq,
-                          tag=sip_obj.tag, call_id=sip_obj.call_id)
-                sock.sendto(bye.build_message().encode(), addr)
                 call_active = False
         except Exception as e:
             print(f"Error: {e}")
@@ -174,7 +180,7 @@ def sip_listener(sock):
             sock.sendto(error_sip.build_message().encode(), addr)
 
 def main():
-    global SIP_PORT, RTP_PORT, sender_mode, current_send_file, current_record_file
+    global SIP_PORT, RTP_PORT, sender_mode, current_send_file, current_record_file, sip_sock
     sip_sock, actual_sip_port = bind_sip_socket(LOCAL_IP, SIP_PORT)
     SIP_PORT = actual_sip_port
     threading.Thread(target=sip_listener, args=(sip_sock,), daemon=True).start()
@@ -219,8 +225,15 @@ def main():
             f_name = cmd[1] if len(cmd) > 1 else "received_output.g711"
             play_local_file(f_name)
         elif cmd[0] == "endcall":
-            global call_active
             call_active = False
+            if current_session['remote_ip'] and sip_sock:
+                bye = SIP(request="BYE", local_ip=LOCAL_IP, remote_ip=current_session['remote_ip'],
+                          from_user=FROM_USER, to_user=TO_USER,
+                          local_port=SIP_PORT, remote_port=current_session['remote_port'],
+                          cseq=current_session['remote_cseq'] + 1 if current_session['remote_cseq'] else 1,
+                          tag=current_session['tag'], call_id=current_session['call_id'])
+                sip_sock.sendto(bye.build_message().encode(), (current_session['remote_ip'], current_session['remote_port']))
+                print(f"[SIP] BYE sent to {current_session['remote_ip']}:{current_session['remote_port']}")
         elif cmd[0] == "exit": break
 
 if __name__ == "__main__":
